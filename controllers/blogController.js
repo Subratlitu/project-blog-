@@ -1,4 +1,5 @@
 const { query } = require("express");
+const { type } = require("express/lib/response");
 const { default: mongoose } = require("mongoose");
 const authorModel = require("../models/authorModel");
 const blogModel = require("../models/blogModel");
@@ -121,26 +122,76 @@ const getBlogs = async (req, res) => {
 
 const updateBlog = async (req, res) => {
   try {
-      
-    const blogId = req.params.blogId;
-    const data = req.body;
-    if(Object.keys(data).length == 0){
-        return res.status(400).send({status:false, msg:"Invalid Request"})
-    }
-    const deleteTrue = await blogModel.findById(blogId);
-    if (deleteTrue.isDeleted) {
-      return res.status(404).json({ status: false, msg: "ID not found!" });
-    }
+      const requestBody=req.body
+      const params=req.params
+      const blogId=params.blogId
+      const authorIdFromToken=req.authorId
 
-    const blog = await blogModel.findOneAndUpdate({ _id: blogId }, req.body, {
-      new: true,
-      runValidators: true,
-    });
+      if(!isValidObjectId(blogId)){
+        res.status(400).send({status:false,message:`${blogId} is not a valid blog id`})
+        return
+  
+      }if(!isValidObjectId(authorIdFromToken)){
+        res.status(400).send({status:false,message:`${authorIdFromToken} is not a valid author id`})
+        return
+  
+      }
+      const blog=await blogModel.findOne({_id:blogId,isDeleted:false,deletedAt:null})
+      if(!blog){
+        res.status(404).send({status:false,message:'blog not found'})
+        return
+      }
+      if(blog.authorId.toString() !== authorIdFromToken){
+        res.status(401).send({status:false,message:'Unauthorised access ! owner info does not match'})
+        return
+      }
+      if(!isValidRequestBody(requestBody)){
+        res.status(200).send({status:true,message:'No parameters passed.Blog unmodified'})
+        return
+      }
+      const{title,body,tags,category,subcategory,ispublished}=requestBody
+      const updatedBlogData={}
 
-    if (!blog) {
-      return res.status(404).json({ msg: `No blog with id: ${blogId}` });
-    }
-    res.status(200).json({ id: blogId, data: req.body });
+      if(isValid(title)){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
+        updatedBlogData['$set']['title']=title
+      }
+      if(isValid(body)){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
+        updatedBlogData['$set']['body']=body
+      }
+      if(isValid(category)){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
+        updatedBlogData['$set']['category']=category
+      }
+      if(ispublished !== undefined){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
+        updatedBlogData['$set']['ispublished']=ispublished
+        updatedBlogData['$set']['publishedAt']=ispublished ? new Date() : null
+      }
+      if(tags){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$addToSet')) updatedBlogData['$addToSet']={}
+        if(Array.isArray(tags)){
+          updatedBlogData['$addToSet']['tags']={ $each :[...tags]}
+        }
+        if(typeof tags==="string"){
+          updatedBlogData['$addToSet']['tags']=tags
+        }
+      }
+      if(subcategory){
+        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$addToSet')) updatedBlogData['$addToSet']={}
+        if(Array.isArray(subcategory)){
+          updatedBlogData['$addToSet']['subcategory']={ $each :[...subcategory]}
+        }
+        if(typeof subcategory==="string"){
+          updatedBlogData['$addToSet']['subcategory']=subcategory
+        }
+      }
+
+      const updatedBlog=await blogModel.findOneAndUpdate({_id:blogId},updatedBlogData,{new:true})
+      res.status(200).send({status:true,message:'blog updated successfully',data:updatedBlog})
+
+   
   } catch (error) {
     res.status(500).json({ msg: "Error", Error: error.message });
   }
@@ -148,17 +199,34 @@ const updateBlog = async (req, res) => {
 
 const deleteById = async (req, res) => {
   try {
-    const blogId = req.params.blogId;
-    const idCheck = await blogModel.findById(blogId);
-    if (!idCheck) {
-      return res.status(404).send({ status: false, msg: "Invalid blog ID!" });
+    const params=req.params
+    const blogId = params.blogId;
+    const authorIdFromToken=req.authorId
+
+    if(!isValidObjectId(blogId)){
+      res.status(400).send({status:false,message:`${blogId} is not a valid blog id`})
+      return
     }
-    const searchId = await blogModel.findByIdAndUpdate(blogId, {
-      isDeleted: true,
-      deletedAt: new Date(),
-      new: true,
-    });
-    res.status(200).send({ status: true, msg: "ID deleted Successfully",data:searchId });
+    if(!isValidObjectId(authorIdFromToken)){
+      res.status(400).send({status:false,message:`${authorIdFromToken} is not a valid token id`})
+      return
+    }
+
+    const blog=await blogModel.findOne({_id:blogId,isDeleted:false,deletedAt:null})
+    if(!blog){
+      res.status(404).send({status:false,message:'  blog not found'})
+      return
+    }
+    if(blog.authorId.toString() !== authorIdFromToken){
+      res.status(401).send({status:false,message:' Unauthorised access! owner details doesnot match'})
+      return
+
+    }
+    await blogModel.findOneAndUpdate({_id:blogId},{$set:{isDeleted:true,deletedAt:new Date()}})
+    res.status(200).send({status:true,message:' deleted successfully'})
+   
+
+
   } catch (error) {
     res.status(500).json({ msg: "Error", Error: error.message });
   }
@@ -166,16 +234,51 @@ const deleteById = async (req, res) => {
 
 const deleteByQuery = async (req, res) => {
     try {
-        let blogs = await blogModel.find(req.query);
-        //console.log(blogs);
-        for(let i=0; i<blogs.length; i++){
-            blogs[i].isDeleted = true;
+        const filterQuery={isDeleted:false,deletedAt:null}
+        const queryParams=req.query
+        const authorIdFromToken=req.authorId
+        
+
+        if(!isValidObjectId(authorIdFromToken)){
+          res.status(400).send({status:false,message:`${authorIdFromToken} is not a valid token id`})
+          return
         }
-        blogs.save()
-        //let changeBlog =  blogModel.updateMany(blogs,{isDeleted: true, new:true});
-        
-        res.status(200).json({status:true, msg:"Deleted Successfully!", data:blogs});
-        
+        if(!isValidRequestBody(queryParams)){
+          res.status(400).send({status:false,message:"no query params recived"})
+          return
+        }
+        const {authorId,category,tags,subcategory,ispublished}=queryParams
+        if(isValid(authorId)&& isValidObjectId(authorId)){
+          filterQuery['authorId']=authorId
+        }
+        if(isValid(category)){
+          filterQuery['category']=category.trim()
+        }
+        if(isValid(ispublished)){
+          filterQuery['ispublished']=ispublished
+        }
+        if(isValid(tags)){
+          const tagsArr=tags.trim().split(',').map(tag => tag.trim());
+          filterQuery['tags']={$all:tagsArr}
+        }
+        if(isValid(subcategory)){
+          const subCatArr=subcategory.trim().split(',').map(subcat => subcat.trim());
+          filterQuery['subcategory']={$all:subCatArr}
+        }
+        const blogs=await blogModel.find(filterQuery)
+        if(Array.isArray(blogs)&& blogs.length ===0){
+          res.status(404).send({status:false,message:' no matching blog found'})
+          return
+        }
+        const idOfBlogsToDelete=blogs.map(blog=>{
+          if(blog.authorId.toString() ===authorIdFromToken) return blog._id
+        })
+        if(idOfBlogsToDelete.length===0){
+          res.status(404).send({status:false,message:' no  blogs found'})
+          return
+        }
+        await blogModel.updateMany({_id:{$in:idOfBlogsToDelete}},{$set:{isDeleted:true,deletedAt:new Date()}})
+        res.status(200).send({status:true,message:'blogs deleted successfully'})
     } catch (error) {
         res.status(500).json({ msg: "Error", Error: error.message });
     }
