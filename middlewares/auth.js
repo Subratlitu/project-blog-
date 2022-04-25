@@ -9,7 +9,7 @@ const auth = async (req,res,next)=>{
         }
         else{
             let decodedToken = jwt.verify(token,'functionup-project');
-           // console.log(decodedToken)
+            //console.log(decodedToken)
             if(decodedToken){
                 req.author = decodedToken;
                 next();

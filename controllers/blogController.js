@@ -13,8 +13,20 @@ const isValid=function(value){
 const isValidRequestBody=function(requestBody){
   return Object.keys(requestBody).length>0
 }
-const isValidObjectId=function(ObjectId){
-  return mongoose.Types.ObjectId.isValid(ObjectId)
+const isValidObjectId= function (a){
+  if((ObjectId.isValid(a)))//checking for 12 bytes id in input value 
+  {  
+      let b =  (String)(new ObjectId(a))//converting input value in valid object Id
+      
+      if(b == a) //comparing converted object Id with input value
+      {       
+          return true;
+      }else{
+              return false;
+          }
+  }else{
+      return false;
+  }
 }
 const createBlog = async (req, res) => {
   try {
@@ -108,9 +120,8 @@ const getBlogs = async (req, res) => {
     }
     const blogs=await blogModel.find(filterQuery)
     if(Array.isArray(blogs) && blogs.length===0){
-      res.status(400).send({status:false,message:'no blogs found'})
+      res.status(404).send({status:false,message:'no blogs found'})
       return
-
     }
     res.status(201).send({status:true,message:'blogs list',data:blogs})
 
@@ -125,7 +136,7 @@ const updateBlog = async (req, res) => {
       const requestBody=req.body
       const params=req.params
       const blogId=params.blogId
-      const authorIdFromToken=req.authorId
+      const authorIdFromToken=req.author.authorId
 
       if(!isValidObjectId(blogId)){
         res.status(400).send({status:false,message:`${blogId} is not a valid blog id`})
@@ -151,41 +162,27 @@ const updateBlog = async (req, res) => {
       }
       const{title,body,tags,category,subcategory,ispublished}=requestBody
       const updatedBlogData={}
-
+      
       if(isValid(title)){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
-        updatedBlogData['$set']['title']=title
+        updatedBlogData.title=title
       }
       if(isValid(body)){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
-        updatedBlogData['$set']['body']=body
-      }
-      if(isValid(category)){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
-        updatedBlogData['$set']['category']=category
+        updatedBlogData.body=body
       }
       if(ispublished !== undefined){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$set')) updatedBlogData['$set']={}
-        updatedBlogData['$set']['ispublished']=ispublished
-        updatedBlogData['$set']['publishedAt']=ispublished ? new Date() : null
+        updatedBlogData.ispublished=ispublished
+      }
+      if(category){
+        if(!Array.isArray(category)) return res.status(400).send({status:false,message:"please provide category in array of objects"})
+        updatedBlogData.category=category
       }
       if(tags){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$addToSet')) updatedBlogData['$addToSet']={}
-        if(Array.isArray(tags)){
-          updatedBlogData['$addToSet']['tags']={ $each :[...tags]}
-        }
-        if(typeof tags==="string"){
-          updatedBlogData['$addToSet']['tags']=tags
-        }
+        if(!Array.isArray(tags)) return res.status(400).send({status:false,message:"please provide tags in array of objects"})
+        updatedBlogData.tags=tags
       }
       if(subcategory){
-        if(!Object.prototype.hasOwnProperty.call(updatedBlogData,'$addToSet')) updatedBlogData['$addToSet']={}
-        if(Array.isArray(subcategory)){
-          updatedBlogData['$addToSet']['subcategory']={ $each :[...subcategory]}
-        }
-        if(typeof subcategory==="string"){
-          updatedBlogData['$addToSet']['subcategory']=subcategory
-        }
+        if(!Array.isArray(subcategory)) return res.status(400).send({status:false,message:"please provide sub category in array of objects"})
+        updatedBlogData.subcategory=subcategory
       }
 
       const updatedBlog=await blogModel.findOneAndUpdate({_id:blogId},updatedBlogData,{new:true})
@@ -201,7 +198,7 @@ const deleteById = async (req, res) => {
   try {
     const params=req.params
     const blogId = params.blogId;
-    const authorIdFromToken=req.authorId
+    const authorIdFromToken=req.author.authorId
 
     if(!isValidObjectId(blogId)){
       res.status(400).send({status:false,message:`${blogId} is not a valid blog id`})
@@ -236,7 +233,7 @@ const deleteByQuery = async (req, res) => {
     try {
         const filterQuery={isDeleted:false,deletedAt:null}
         const queryParams=req.query
-        const authorIdFromToken=req.authorId
+        const authorIdFromToken=req.author.authorId
         
 
         if(!isValidObjectId(authorIdFromToken)){
@@ -252,7 +249,8 @@ const deleteByQuery = async (req, res) => {
           filterQuery['authorId']=authorId
         }
         if(isValid(category)){
-          filterQuery['category']=category.trim()
+          const catArr=category.trim().split(',').map(category => category.trim());
+          filterQuery['category']={$all:catArr}
         }
         if(isValid(ispublished)){
           filterQuery['ispublished']=ispublished
